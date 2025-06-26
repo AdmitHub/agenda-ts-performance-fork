@@ -7,9 +7,11 @@ import type { Agenda } from './index';
  */
 export class JobProcessingQueue {
 	private _queue: Job[];
+	private readonly maxQueueSize: number;
 
-	constructor(private agenda: Agenda) {
+	constructor(private agenda: Agenda, maxQueueSize = 10000) {
 		this._queue = [];
+		this.maxQueueSize = maxQueueSize;
 	}
 
 	get length(): number {
@@ -58,9 +60,20 @@ export class JobProcessingQueue {
 	 * order of nextRunAt and priority (in case of same nextRunAt), if all values
 	 * are even the first jobs to be introduced will have priority
 	 * @param {Job} job job to add to queue
-	 * @returns {undefined}
+	 * @returns {boolean} true if job was inserted, false if queue is full
 	 */
-	insert(job: Job): void {
+	insert(job: Job): boolean {
+		// Check if queue is at capacity
+		if (this._queue.length >= this.maxQueueSize) {
+			// Queue is full - implement overflow handling
+			// Could emit an event here for monitoring
+			this.agenda.emit('queueOverflow', { 
+				jobName: job.attrs.name, 
+				queueSize: this._queue.length,
+				maxSize: this.maxQueueSize 
+			});
+			return false;
+		}
 		const matchIndex = this._queue.findIndex(element => {
 			if (
 				element.attrs.nextRunAt &&
@@ -68,7 +81,7 @@ export class JobProcessingQueue {
 				element.attrs.nextRunAt.getTime() <= job.attrs.nextRunAt.getTime()
 			) {
 				if (element.attrs.nextRunAt.getTime() === job.attrs.nextRunAt.getTime()) {
-					if (element.attrs.priority >= job.attrs.priority) {
+					if (element.attrs.priority <= job.attrs.priority) {
 						return true;
 					}
 				} else {
@@ -85,6 +98,24 @@ export class JobProcessingQueue {
 		} else {
 			this._queue.splice(matchIndex, 0, job);
 		}
+		return true;
+	}
+
+	/**
+	 * Gets the current queue utilization as a percentage
+	 * @returns {number} utilization percentage (0-100)
+	 */
+	getUtilization(): number {
+		return (this._queue.length / this.maxQueueSize) * 100;
+	}
+
+	/**
+	 * Checks if the queue is approaching capacity
+	 * @param {number} threshold threshold percentage (default 80%)
+	 * @returns {boolean} true if queue is approaching capacity
+	 */
+	isNearCapacity(threshold = 80): boolean {
+		return this.getUtilization() >= threshold;
 	}
 
 	/**

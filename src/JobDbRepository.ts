@@ -279,7 +279,44 @@ export class JobDbRepository {
 		if (this.connectOptions.ensureIndex) {
 			log('attempting index creation');
 			try {
-				const result = await this.collection.createIndex(
+				// Optimized index for job discovery - prioritizes common query patterns
+				const primaryResult = await this.collection.createIndex(
+					{
+						name: 1,
+						disabled: 1,
+						nextRunAt: 1,
+						lockedAt: 1,
+						priority: -1
+					},
+					{ name: 'optimizedJobDiscoveryIndex' }
+				);
+				log('primary index successfully created', primaryResult);
+
+				// Separate index for locked job queries and cleanup
+				const lockedJobResult = await this.collection.createIndex(
+					{
+						lockedAt: 1,
+						name: 1
+					},
+					{ 
+						name: 'lockedJobIndex',
+						partialFilterExpression: { lockedAt: { $ne: null } }
+					}
+				);
+				log('locked job index successfully created', lockedJobResult);
+
+				// Index for job status and history queries
+				const statusResult = await this.collection.createIndex(
+					{
+						name: 1,
+						lastFinishedAt: -1
+					},
+					{ name: 'jobStatusIndex' }
+				);
+				log('status index successfully created', statusResult);
+
+				// Legacy index for backward compatibility (if needed)
+				const legacyResult = await this.collection.createIndex(
 					{
 						name: 1,
 						...this.connectOptions.sort,
@@ -290,7 +327,8 @@ export class JobDbRepository {
 					},
 					{ name: 'findAndLockNextJobIndex' }
 				);
-				log('index succesfully created', result);
+				log('legacy index successfully created', legacyResult);
+
 			} catch (error) {
 				log('db index creation failed', error);
 				throw error;
@@ -308,6 +346,15 @@ export class JobDbRepository {
 		}
 
 		const client = await MongoClient.connect(connectionString, {
+			// Default optimized connection pool settings
+			maxPoolSize: 100,
+			minPoolSize: 10,
+			maxIdleTimeMS: 30000,
+			waitQueueTimeoutMS: 5000,
+			serverSelectionTimeoutMS: 5000,
+			socketTimeoutMS: 0, // Never timeout socket operations
+			family: 4, // Use IPv4, skip IPv6 resolution unless needed
+			// User provided options can override defaults
 			...options
 		});
 

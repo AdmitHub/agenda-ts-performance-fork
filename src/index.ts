@@ -593,7 +593,21 @@ export class Agenda extends EventEmitter {
 			await this.db.unlockJobs(jobIds);
 		}
 
+		// Clean up event listeners to prevent memory leaks
 		this.off('processJob', this.jobProcessor.process.bind(this.jobProcessor));
+		
+		// Remove all job-specific event listeners
+		Object.keys(this.definitions).forEach(jobName => {
+			this.removeAllListeners(`start:${jobName}`);
+			this.removeAllListeners(`success:${jobName}`);
+			this.removeAllListeners(`fail:${jobName}`);
+			this.removeAllListeners(`complete:${jobName}`);
+			this.removeAllListeners(`cancel:${jobName}`);
+		});
+
+		// Remove general event listeners (keep ready and error for reuse)
+		this.removeAllListeners('processJob');
+		this.removeAllListeners('queueOverflow');
 
 		this.jobProcessor = undefined;
 	}

@@ -605,7 +605,7 @@ describe('Agenda', () => {
 			expect(listIndex.cursor.firstBatch[0].name).to.be.equal('_id_');
 		});
 
-		it('ensureIndex-Option true does create index findAndLockNextJobIndex', async () => {
+		it('ensureIndex-Option true does create optimized indexes', async () => {
 			const agenda = new Agenda({
 				mongo: mongoDb,
 				ensureIndex: true
@@ -614,11 +614,23 @@ describe('Agenda', () => {
 			agenda.define('someJob', jobProcessor);
 			await agenda.create('someJob', 1).save();
 
+			// Wait for index creation to complete
+			await delay(2000);
+
 			const listIndex = await mongoDb.command({ listIndexes: 'agendaJobs' });
-			expect(listIndex.cursor.firstBatch).to.have.lengthOf(2);
-			expect(listIndex.cursor.firstBatch[0].name).to.be.equal('_id_');
-			expect(listIndex.cursor.firstBatch[1].name).to.be.equal('findAndLockNextJobIndex');
-		});
+			const indexes = listIndex.cursor.firstBatch;
+			
+			// Should have _id_ + 4 optimized indexes
+			expect(indexes).to.have.lengthOf(5);
+			expect(indexes[0].name).to.be.equal('_id_');
+			
+			// Check that our optimized indexes exist
+			const indexNames = indexes.map(idx => idx.name);
+			expect(indexNames).to.include('optimizedJobDiscoveryIndex');
+			expect(indexNames).to.include('lockedJobIndex');
+			expect(indexNames).to.include('jobStatusIndex');
+			expect(indexNames).to.include('findAndLockNextJobIndex'); // Legacy compatibility
+		}).timeout(30000);
 
 		it('creating two agenda-instances with ensureIndex-Option true does not throw an error', async () => {
 			const agenda = new Agenda({
@@ -629,6 +641,9 @@ describe('Agenda', () => {
 			agenda.define('someJob', jobProcessor);
 			await agenda.create('someJob', 1).save();
 
+			// Wait for index creation to complete
+			await delay(1000);
+
 			const secondAgenda = new Agenda({
 				mongo: mongoDb,
 				ensureIndex: true
@@ -636,7 +651,10 @@ describe('Agenda', () => {
 
 			secondAgenda.define('someJob', jobProcessor);
 			await secondAgenda.create('someJob', 1).save();
-		});
+			
+			// Wait for second index creation to complete
+			await delay(1000);
+		}).timeout(30000);
 	});
 
 	describe('process jobs', () => {

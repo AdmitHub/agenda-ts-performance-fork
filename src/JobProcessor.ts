@@ -82,10 +82,13 @@ export class JobProcessor {
 	private jobQueue: JobProcessingQueue = new JobProcessingQueue(this.agenda);
 
 	private runningJobs: JobWithId[] = [];
+	private runningJobsMap = new Map<string, JobWithId>();
 
 	private lockedJobs: JobWithId[] = [];
+	private lockedJobsMap = new Map<string, JobWithId>();
 
 	private jobsToLock: JobWithId[] = [];
+	private jobsToLockMap = new Map<string, JobWithId>();
 
 	private isLockingOnTheFly = false;
 
@@ -150,7 +153,7 @@ export class JobProcessor {
 				extraJob.attrs.name
 			);
 			// Add the job to list of jobs to lock and then lock it immediately!
-			this.jobsToLock.push(extraJob);
+			this.addJobToLock(extraJob);
 			await this.lockOnTheFly();
 		}
 	}
@@ -188,12 +191,24 @@ export class JobProcessor {
 
 	/**
 	 * Internal method that adds jobs to be processed to the local queue
-	 * @param {*} jobs Jobs to queue
-	 * @param {boolean} inFront puts the job in front of queue if true
-	 * @returns {undefined}
+	 * @param {Job} job Job to queue
+	 * @returns {boolean} true if job was successfully enqueued
 	 */
-	private enqueueJob(job: Job): void {
-		this.jobQueue.insert(job);
+	private enqueueJob(job: Job): boolean {
+		const inserted = this.jobQueue.insert(job);
+		if (!inserted) {
+			log.extend('enqueueJob')(
+				'Failed to enqueue job [%s:%s] - queue is at capacity (%d)',
+				job.attrs.name,
+				job.attrs._id,
+				this.jobQueue.length
+			);
+			// Could implement fallback behavior here, such as:
+			// - Immediate processing
+			// - Dropping the job
+			// - Storing in overflow queue
+		}
+		return inserted;
 	}
 
 	/**
@@ -269,7 +284,7 @@ export class JobProcessor {
 						jobToEnqueue.attrs._id
 					);
 					this.updateStatus(jobToEnqueue.attrs.name, 'locked', +1);
-					this.lockedJobs.push(jobToEnqueue);
+					this.addLockedJob(jobToEnqueue);
 					this.enqueueJob(jobToEnqueue);
 					this.jobProcessing();
 				} else {
@@ -411,7 +426,7 @@ export class JobProcessor {
 						job.attrs._id
 					);
 					this.updateStatus(name, 'locked', +1);
-					this.lockedJobs.push(job);
+					this.addLockedJob(job);
 
 					this.enqueueJob(job);
 				}
@@ -487,18 +502,9 @@ export class JobProcessor {
 							job.attrs.name,
 							job.attrs._id
 						);
-						let lockedJobIndex = this.lockedJobs.indexOf(job);
-						if (lockedJobIndex === -1) {
-							// lookup by id
-							lockedJobIndex = this.lockedJobs.findIndex(
-								j => j.attrs._id?.toString() === job.attrs._id?.toString()
-							);
-						}
-						if (lockedJobIndex === -1) {
+						if (!this.removeLockedJob(job)) {
 							throw new Error(`cannot find job ${job.attrs._id} in locked jobs queue?`);
 						}
-
-						this.lockedJobs.splice(lockedJobIndex, 1);
 						this.updateStatus(job.attrs.name, 'locked', -1);
 					} else {
 						log.extend('jobProcessing')(
@@ -557,7 +563,7 @@ export class JobProcessor {
 			this.runningJobs.length < this.maxConcurrency
 		) {
 			// Add to local "running" queue
-			this.runningJobs.push(job);
+			this.addRunningJob(job);
 			this.updateStatus(job.attrs.name, 'running', 1);
 
 			let jobIsRunning = true;
@@ -625,7 +631,7 @@ export class JobProcessor {
 				);
 
 				// Job isn't in running jobs so throw an error
-				if (!this.runningJobs.includes(job)) {
+				if (!this.isJobRunning(job)) {
 					log.extend('runOrRetry')(
 						'[%s] callback was called, job must have been marked as complete already',
 						job.attrs._id
@@ -647,33 +653,17 @@ export class JobProcessor {
 				jobIsRunning = false;
 
 				// Remove the job from the running queue
-				let runningJobIndex = this.runningJobs.indexOf(job);
-				if (runningJobIndex === -1) {
-					// lookup by id
-					runningJobIndex = this.runningJobs.findIndex(
-						j => j.attrs._id?.toString() === job.attrs._id?.toString()
-					);
-				}
-				if (runningJobIndex === -1) {
+				if (!this.removeRunningJob(job)) {
 					// eslint-disable-next-line no-unsafe-finally
 					throw new Error(`cannot find job ${job.attrs._id} in running jobs queue?`);
 				}
-				this.runningJobs.splice(runningJobIndex, 1);
 				this.updateStatus(job.attrs.name, 'running', -1);
 
 				// Remove the job from the locked queue
-				let lockedJobIndex = this.lockedJobs.indexOf(job);
-				if (lockedJobIndex === -1) {
-					// lookup by id
-					lockedJobIndex = this.lockedJobs.findIndex(
-						j => j.attrs._id?.toString() === job.attrs._id?.toString()
-					);
-				}
-				if (lockedJobIndex === -1) {
+				if (!this.removeLockedJob(job)) {
 					// eslint-disable-next-line no-unsafe-finally
 					throw new Error(`cannot find job ${job.attrs._id} in locked jobs queue?`);
 				}
-				this.lockedJobs.splice(lockedJobIndex, 1);
 				this.updateStatus(job.attrs.name, 'locked', -1);
 			}
 
@@ -704,5 +694,99 @@ export class JobProcessor {
 		}
 		// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 		this.jobStatus[name]![key] += number;
+	}
+
+	/**
+	 * Adds a job to the running jobs collection (both array and map)
+	 */
+	private addRunningJob(job: JobWithId): void {
+		const jobId = job.attrs._id?.toString();
+		if (jobId && !this.runningJobsMap.has(jobId)) {
+			this.runningJobs.push(job);
+			this.runningJobsMap.set(jobId, job);
+		}
+	}
+
+	/**
+	 * Removes a job from the running jobs collection (both array and map)
+	 */
+	private removeRunningJob(job: JobWithId): boolean {
+		const jobId = job.attrs._id?.toString();
+		if (!jobId) return false;
+
+		// Remove from map first (O(1))
+		const removed = this.runningJobsMap.delete(jobId);
+		if (removed) {
+			// Remove from array (O(n) but necessary for backward compatibility)
+			const index = this.runningJobs.findIndex(j => j.attrs._id?.toString() === jobId);
+			if (index !== -1) {
+				this.runningJobs.splice(index, 1);
+			}
+		}
+		return removed;
+	}
+
+	/**
+	 * Adds a job to the locked jobs collection (both array and map)
+	 */
+	private addLockedJob(job: JobWithId): void {
+		const jobId = job.attrs._id?.toString();
+		if (jobId && !this.lockedJobsMap.has(jobId)) {
+			this.lockedJobs.push(job);
+			this.lockedJobsMap.set(jobId, job);
+		}
+	}
+
+	/**
+	 * Removes a job from the locked jobs collection (both array and map)
+	 */
+	private removeLockedJob(job: JobWithId): boolean {
+		const jobId = job.attrs._id?.toString();
+		if (!jobId) return false;
+
+		const removed = this.lockedJobsMap.delete(jobId);
+		if (removed) {
+			const index = this.lockedJobs.findIndex(j => j.attrs._id?.toString() === jobId);
+			if (index !== -1) {
+				this.lockedJobs.splice(index, 1);
+			}
+		}
+		return removed;
+	}
+
+	/**
+	 * Adds a job to the jobsToLock collection (both array and map)
+	 */
+	private addJobToLock(job: JobWithId): void {
+		const jobId = job.attrs._id?.toString();
+		if (jobId && !this.jobsToLockMap.has(jobId)) {
+			this.jobsToLock.push(job);
+			this.jobsToLockMap.set(jobId, job);
+		}
+	}
+
+	/**
+	 * Removes a job from the jobsToLock collection (both array and map)
+	 */
+	private removeJobToLock(job: JobWithId): boolean {
+		const jobId = job.attrs._id?.toString();
+		if (!jobId) return false;
+
+		const removed = this.jobsToLockMap.delete(jobId);
+		if (removed) {
+			const index = this.jobsToLock.findIndex(j => j.attrs._id?.toString() === jobId);
+			if (index !== -1) {
+				this.jobsToLock.splice(index, 1);
+			}
+		}
+		return removed;
+	}
+
+	/**
+	 * Fast lookup to check if a job is currently running
+	 */
+	private isJobRunning(job: JobWithId): boolean {
+		const jobId = job.attrs._id?.toString();
+		return jobId ? this.runningJobsMap.has(jobId) : false;
 	}
 }

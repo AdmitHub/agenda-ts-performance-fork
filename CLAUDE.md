@@ -189,3 +189,151 @@ const agenda = new Agenda({
 - **Limited Capacity**: When only 1 concurrency slot is available
 - **Small Batch Size**: When `batchSize: 1` is configured
 - **No Available Jobs**: When fewer jobs are available than the batch size
+
+### Performance Optimizations
+AgendaTS includes several performance optimizations for production environments:
+
+#### MongoDB Index Optimization
+When `ensureIndex: true` is set, AgendaTS creates multiple optimized indexes:
+
+```javascript
+// Primary job discovery index - optimized for common query patterns
+{ name: 1, disabled: 1, nextRunAt: 1, lockedAt: 1, priority: -1 }
+
+// Locked job index with partial filter for cleanup operations
+{ lockedAt: 1, name: 1 } // Only indexes documents where lockedAt is not null
+
+// Job status index for history queries
+{ name: 1, lastFinishedAt: -1 }
+
+// Legacy index for backward compatibility
+{ name: 1, nextRunAt: 1, priority: -1, lockedAt: 1, disabled: 1 }
+```
+
+#### Memory Management
+The job processing queue now includes memory limits to prevent unbounded growth:
+
+```javascript
+// Default queue configuration
+const queue = new JobProcessingQueue(agenda, maxQueueSize = 10000);
+
+// Queue monitoring
+queue.getUtilization(); // Returns 0-100% usage
+queue.isNearCapacity(threshold = 80); // Returns true if queue is filling up
+
+// Queue overflow event
+agenda.on('queueOverflow', ({ jobName, queueSize, maxSize }) => {
+  console.warn(`Queue overflow: ${jobName}, size: ${queueSize}/${maxSize}`);
+});
+```
+
+#### Optimized Job Tracking
+Internal job collections use Maps for O(1) lookups instead of O(n) array searches:
+
+- Running jobs tracked with both array and Map
+- Locked jobs tracked with both array and Map  
+- Fast `isJobRunning()` check for duplicate detection
+- Efficient job removal without array scanning
+
+#### MongoDB Connection Pooling
+Default optimized connection settings:
+
+```javascript
+const agenda = new Agenda({
+  db: {
+    address: mongoConnectionString,
+    options: {
+      maxPoolSize: 100,           // Maximum connections in pool
+      minPoolSize: 10,            // Minimum connections to maintain
+      maxIdleTimeMS: 30000,       // Close idle connections after 30s
+      waitQueueTimeoutMS: 5000,   // Max wait time for connection
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 0,         // Never timeout socket operations
+      family: 4                   // Use IPv4 (skip IPv6 unless needed)
+    }
+  }
+});
+```
+
+#### Memory Leak Prevention
+Comprehensive event listener cleanup on stop:
+
+- All job-specific event listeners removed (`start:jobName`, `success:jobName`, etc.)
+- General event listeners cleaned up (`processJob`, `queueOverflow`)
+- Proper resource disposal prevents memory leaks in long-running applications
+
+### Performance Tuning Guide
+
+#### For High-Throughput Systems
+```javascript
+const agenda = new Agenda({
+  mongo: db,
+  maxConcurrency: 100,          // Process many jobs concurrently
+  defaultConcurrency: 10,       // Higher per-job concurrency
+  batchSize: 20,               // Larger batches for efficiency
+  enableBatchProcessing: true,
+  processEvery: '1 second',    // Frequent job discovery
+  defaultLockLifetime: 300000  // 5 minutes for long-running jobs
+});
+```
+
+#### For Resource-Constrained Systems
+```javascript
+const agenda = new Agenda({
+  mongo: db,
+  maxConcurrency: 5,           // Limit concurrent processing
+  defaultConcurrency: 1,       // Single job concurrency
+  batchSize: 3,               // Small batches
+  processEvery: '10 seconds', // Less frequent polling
+  defaultLockLifetime: 60000  // 1 minute timeout
+});
+```
+
+#### For Mixed Workloads
+```javascript
+// Define high-priority jobs with specific settings
+agenda.define('critical-job', { 
+  priority: 10, 
+  concurrency: 5,
+  lockLifetime: 120000 
+}, handler);
+
+// Define batch jobs with relaxed settings
+agenda.define('batch-job', { 
+  priority: -10, 
+  concurrency: 1,
+  lockLifetime: 600000  // 10 minutes
+}, handler);
+```
+
+### Monitoring and Debugging
+
+#### Queue Status Monitoring
+```javascript
+const status = await agenda.getRunningStats();
+console.log({
+  queueUtilization: agenda.jobQueue.getUtilization(),
+  totalQueueSize: status.totalQueueSizeDB,
+  runningJobs: status.runningJobs.length,
+  lockedJobs: status.lockedJobs.length,
+  queuedJobs: status.queuedJobs
+});
+```
+
+#### Performance Events
+```javascript
+// Monitor queue overflow
+agenda.on('queueOverflow', (details) => {
+  metrics.increment('agenda.queue.overflow', { job: details.jobName });
+});
+
+// Track job processing times
+agenda.on('start', (job) => {
+  job.attrs._startTime = Date.now();
+});
+
+agenda.on('complete', (job) => {
+  const duration = Date.now() - job.attrs._startTime;
+  metrics.histogram('job.duration', duration, { name: job.attrs.name });
+});
+```
