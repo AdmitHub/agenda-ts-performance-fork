@@ -13,6 +13,7 @@ import type { Job, JobWithId } from './Job';
 import type { Agenda } from './index';
 import type { IDatabaseOptions, IDbConfig, IMongoOptions } from './types/DbOptions';
 import type { IJobParameters } from './types/JobParameters';
+import { retryWithBackoff } from './utils/retryWithBackoff';
 import { hasMongoProtocol } from './utils/hasMongoProtocol';
 
 const log = debug('agenda:db');
@@ -99,25 +100,32 @@ export class JobDbRepository {
 			_id: job.attrs._id,
 			name: job.attrs.name,
 			lockedAt: null,
-			nextRunAt: job.attrs.nextRunAt,
 			disabled: { $ne: true }
 		};
 
 		// Update / options for the MongoDB query
 		const update: UpdateFilter<IJobParameters> = { $set: { lockedAt: new Date() } };
 
-		// Lock the job in MongoDB!
-		const resp = await this.collection.findOneAndUpdate(
-			criteria as Filter<IJobParameters>,
-			update,
+		// Lock the job in MongoDB with retry logic for write conflicts
+		return retryWithBackoff(
+			async () => {
+				const resp = await this.collection.findOneAndUpdate(
+					criteria as Filter<IJobParameters>,
+					update,
+					{
+						includeResultMetadata: true,
+						returnDocument: 'after',
+						sort: this.connectOptions.sort
+					}
+				);
+				return resp?.value || undefined;
+			},
 			{
-				includeResultMetadata: true,
-				returnDocument: 'after',
-				sort: this.connectOptions.sort
+				maxRetries: 3,
+				baseDelay: 50, // Start with shorter delay for locking operations
+				maxDelay: 1000 // Keep max delay reasonable for job locking
 			}
 		);
-
-		return resp?.value || undefined;
 	}
 
 	async getNextJobToRun(
@@ -150,17 +158,26 @@ export class JobDbRepository {
 		const JOB_PROCESS_SET_QUERY: UpdateFilter<IJobParameters> = { $set: { lockedAt: now } };
 
 		// Find ONE and ONLY ONE job and set the 'lockedAt' time so that job begins to be processed
-		const result = await this.collection.findOneAndUpdate(
-			JOB_PROCESS_WHERE_QUERY,
-			JOB_PROCESS_SET_QUERY,
+		// Use retry logic to handle write conflicts when multiple workers compete for jobs
+		return retryWithBackoff(
+			async () => {
+				const result = await this.collection.findOneAndUpdate(
+					JOB_PROCESS_WHERE_QUERY,
+					JOB_PROCESS_SET_QUERY,
+					{
+						includeResultMetadata: true,
+						returnDocument: 'after',
+						sort: this.connectOptions.sort
+					}
+				);
+				return result?.value || undefined;
+			},
 			{
-				includeResultMetadata: true,
-				returnDocument: 'after',
-				sort: this.connectOptions.sort
+				maxRetries: 3,
+				baseDelay: 100, // Slightly longer delay for job discovery operations
+				maxDelay: 2000
 			}
 		);
-
-		return result?.value || undefined;
 	}
 
 	async connect(): Promise<void> {

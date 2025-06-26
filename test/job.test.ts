@@ -1625,10 +1625,10 @@ describe('Job', () => {
 		do {
 			jobStarted = await agenda.db.getJobs({ name: 'test' });
 			if (!jobStarted[0].lockedAt) {
-				delay(100);
+				await delay(100);
 			}
 			retried++;
-		} while (!jobStarted[0].lockedAt || retried > 10);
+		} while (!jobStarted[0].lockedAt && retried <= 10);
 
 		expect(jobStarted[0].lockedAt).to.exist; // .equal(null);
 

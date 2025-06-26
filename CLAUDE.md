@@ -103,3 +103,16 @@ Jobs stored in MongoDB with key fields:
 - Multiple workers can safely process jobs using MongoDB's atomic locking
 - Jobs remain locked until completion or lock expiration  
 - Supports horizontal scaling across processes/servers
+- **Write Conflict Resilience**: Built-in retry logic with exponential backoff handles MongoDB write conflicts during high-concurrency job locking
+
+### Write Conflict Handling
+AgendaTS includes robust write conflict handling for high-concurrency scenarios:
+
+- **Optimized Locking**: Job locking queries are optimized to reduce unnecessary write conflicts
+- **Retry Logic**: Automatic retry with exponential backoff (50ms-2000ms delays) for transient conflicts
+- **Conflict Detection**: Recognizes MongoDB write conflict errors (codes 112, 11000) and WriteConflict conditions
+- **Graceful Degradation**: Failed retries bubble up as normal errors without affecting system stability
+
+The retry mechanism is implemented in:
+- `lockJob()`: 3 retries with 50-1000ms delays for job locking operations
+- `getNextJobToRun()`: 3 retries with 100-2000ms delays for job discovery operations
