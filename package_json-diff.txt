@@ -1,0 +1,13 @@
+diff --git a/package.json b/package.json
+index 2725aac..573473b 100644
+--- a/package.json
++++ b/package.json
+@@ -56,7 +56,7 @@
+     "debug": "~4",
+     "human-interval": "~2",
+     "luxon": "^3",
+-    "mongodb": "^4"
++    "mongodb": "^6"
+   },
+   "devDependencies": {
+     "@hokify/eslint-config": "^2.3.8",
