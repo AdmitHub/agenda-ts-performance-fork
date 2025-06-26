@@ -307,7 +307,7 @@ describe('Job', () => {
 				timezone: 'GMT'
 			});
 			if (job.attrs.nextRunAt) {
-				expect(job.attrs.nextRunAt.getMonth()).to.equal(0);
+				expect(job.attrs.nextRunAt.getUTCMonth()).to.equal(0);
 			} else {
 				fail();
 			}
