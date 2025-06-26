@@ -308,6 +308,60 @@ export class JobProcessor {
 		return undefined;
 	}
 
+	private async findAndLockNextJobs(
+		jobName: string,
+		definition: IJobDefinition
+	): Promise<JobWithId[]> {
+		const lockDeadline = new Date(Date.now().valueOf() - definition.lockLifetime);
+		
+		// Calculate how many jobs we can process
+		const availableSlots = this.calculateAvailableSlots(jobName);
+		const batchSize = Math.min(this.agenda.attrs.batchSize || 5, availableSlots);
+		
+		log.extend('findAndLockNextJobs')(
+			`looking for up to ${batchSize} lockable jobs for ${jobName} (lock dead line = ${lockDeadline})`
+		);
+
+		// Use batch processing if enabled and beneficial
+		if (this.agenda.attrs.enableBatchProcessing && batchSize > 1) {
+			const results = await this.agenda.db.batchGetNextJobsToRun(
+				jobName, 
+				batchSize, 
+				this.nextScanAt, 
+				lockDeadline
+			);
+
+			return results.map(result => {
+				log.extend('findAndLockNextJobs')(
+					'found a job available to lock in batch, creating a new job on Agenda with id [%s]',
+					result._id
+				);
+				return new Job(this.agenda, result, true) as JobWithId;
+			});
+		} else {
+			// Fall back to single job processing
+			const job = await this.findAndLockNextJob(jobName, definition);
+			return job ? [job] : [];
+		}
+	}
+
+	private calculateAvailableSlots(jobName: string): number {
+		const definition = this.agenda.definitions[jobName];
+		const status = this.jobStatus[jobName];
+		
+		// Calculate global available slots
+		const globalAvailable = this.totalLockLimit > 0 
+			? Math.max(0, this.totalLockLimit - this.lockedJobs.length)
+			: Number.MAX_SAFE_INTEGER;
+		
+		// Calculate job-specific available slots
+		const jobSpecificAvailable = definition.lockLimit > 0 && status
+			? Math.max(0, definition.lockLimit - status.locked)
+			: Number.MAX_SAFE_INTEGER;
+		
+		return Math.min(globalAvailable, jobSpecificAvailable);
+	}
+
 	/**
 	 * Internal method used to fill a queue with jobs that can be run
 	 * @param {String} name fill a queue with specific job name
@@ -328,42 +382,44 @@ export class JobProcessor {
 			const now = new Date();
 			this.nextScanAt = new Date(now.valueOf() + this.processEvery);
 
-			// For this job name, find the next job to run and lock it!
-			const job = await this.findAndLockNextJob(name, this.agenda.definitions[name]);
+			// For this job name, find jobs to run and lock them using batch processing if beneficial
+			const jobs = await this.findAndLockNextJobs(name, this.agenda.definitions[name]);
 
-			// Still have the job?
-			// 1. Add it to lock list
-			// 2. Add count of locked jobs
-			// 3. Queue the job to actually be run now that it is locked
-			// 4. Recursively run this same method we are in to check for more available jobs of same type!
-			if (job) {
-				if (job.attrs.name !== name) {
-					throw new Error(
-						`got different job name: ${job.attrs.name} (actual) !== ${name} (expected)`
-					);
-				}
+			// Process any jobs that were found and locked
+			if (jobs.length > 0) {
+				for (const job of jobs) {
+					if (job.attrs.name !== name) {
+						throw new Error(
+							`got different job name: ${job.attrs.name} (actual) !== ${name} (expected)`
+						);
+					}
 
-				// Before en-queing job make sure we haven't exceed our lock limits
-				if (!this.shouldLock(name)) {
+					// Before en-queing job make sure we haven't exceed our lock limits
+					if (!this.shouldLock(name)) {
+						log.extend('jobQueueFilling')(
+							'lock limit reached before job was returned. Releasing lock on [%s]',
+							name
+						);
+						this.updateStatus(name, 'lockLimitReached', +1);
+						this.agenda.db.unlockJob(job);
+						return;
+					}
+
 					log.extend('jobQueueFilling')(
-						'lock limit reached before job was returned. Releasing lock on [%s]',
-						name
+						'[%s:%s] job locked while filling queue',
+						name,
+						job.attrs._id
 					);
-					this.updateStatus(name, 'lockLimitReached', +1);
-					this.agenda.db.unlockJob(job);
-					return;
+					this.updateStatus(name, 'locked', +1);
+					this.lockedJobs.push(job);
+
+					this.enqueueJob(job);
 				}
 
-				log.extend('jobQueueFilling')(
-					'[%s:%s] job locked while filling queue',
-					name,
-					job.attrs._id
-				);
-				this.updateStatus(name, 'locked', +1);
-				this.lockedJobs.push(job);
-
-				this.enqueueJob(job);
-				await this.jobQueueFilling(name);
+				// Continue filling queue if we have more capacity
+				if (this.shouldLock(name)) {
+					await this.jobQueueFilling(name);
+				}
 			} else {
 				log.extend('jobQueueFilling')('Cannot lock job [%s]', name);
 			}

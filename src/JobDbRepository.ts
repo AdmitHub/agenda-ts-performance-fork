@@ -128,6 +128,85 @@ export class JobDbRepository {
 		);
 	}
 
+	async batchGetNextJobsToRun(
+		jobName: string,
+		batchSize: number,
+		nextScanAt: Date,
+		lockDeadline: Date,
+		now: Date = new Date()
+	): Promise<IJobParameters[]> {
+		/**
+		 * Query used to find jobs to run
+		 */
+		const JOB_PROCESS_WHERE_QUERY: Filter<IJobParameters> = {
+			name: jobName,
+			disabled: { $ne: true },
+			$or: [
+				{
+					lockedAt: { $eq: null as any },
+					nextRunAt: { $lte: nextScanAt }
+				},
+				{
+					lockedAt: { $lte: lockDeadline }
+				}
+			]
+		};
+
+		/**
+		 * Query used to set jobs as locked
+		 */
+		const JOB_PROCESS_SET_QUERY: UpdateFilter<IJobParameters> = { $set: { lockedAt: now } };
+
+		// Use retry logic to handle write conflicts when multiple workers compete for jobs
+		return retryWithBackoff(
+			async () => {
+				// Find available jobs using aggregation pipeline for better performance
+				const pipeline = [
+					{ $match: JOB_PROCESS_WHERE_QUERY },
+					{ $sort: this.connectOptions.sort },
+					{ $limit: batchSize }
+				];
+
+				const availableJobs = await this.collection.aggregate(pipeline).toArray();
+				
+				if (availableJobs.length === 0) {
+					return [];
+				}
+
+				// Extract job IDs for atomic update
+				const jobIds = availableJobs.map(job => job._id);
+
+				// Atomically lock the found jobs
+				const updateResult = await this.collection.updateMany(
+					{
+						_id: { $in: jobIds },
+						// Ensure jobs are still available (not locked by another worker)
+						$or: [
+							{ lockedAt: { $eq: null as any } },
+							{ lockedAt: { $lte: lockDeadline } }
+						]
+					},
+					JOB_PROCESS_SET_QUERY
+				);
+
+				// Return only the jobs that were successfully locked
+				if (updateResult.modifiedCount > 0) {
+					return this.collection.find({
+						_id: { $in: jobIds },
+						lockedAt: now
+					}).toArray();
+				}
+
+				return [];
+			},
+			{
+				maxRetries: 3,
+				baseDelay: 100, // Slightly longer delay for batch operations
+				maxDelay: 2000
+			}
+		);
+	}
+
 	async getNextJobToRun(
 		jobName: string,
 		nextScanAt: Date,

@@ -12,4 +12,8 @@ export interface IAgendaConfig {
 	lockLimit: number;
 
 	defaultLockLifetime: number;
+
+	batchSize?: number;
+
+	enableBatchProcessing?: boolean;
 }

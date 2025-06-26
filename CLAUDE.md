@@ -116,3 +116,76 @@ AgendaTS includes robust write conflict handling for high-concurrency scenarios:
 The retry mechanism is implemented in:
 - `lockJob()`: 3 retries with 50-1000ms delays for job locking operations
 - `getNextJobToRun()`: 3 retries with 100-2000ms delays for job discovery operations
+- `batchGetNextJobsToRun()`: 3 retries with 100-2000ms delays for batch job operations
+
+### Batch Processing
+AgendaTS supports intelligent batch processing to improve performance and reduce write conflicts in high-concurrency scenarios:
+
+#### Configuration Options
+```javascript
+const agenda = new Agenda({
+  mongo: db,
+  batchSize: 5,                    // Number of jobs to process in each batch (default: 5)
+  enableBatchProcessing: true      // Enable/disable batch processing (default: true)
+});
+```
+
+#### How Batch Processing Works
+- **Intelligent Selection**: JobProcessor automatically determines when to use batch vs single job processing
+- **Concurrency Aware**: Batch size is limited by available concurrency slots and lock limits
+- **Atomic Operations**: Multiple jobs are locked atomically to prevent race conditions
+- **Fallback Strategy**: Automatically falls back to single job processing when batch size is 1 or disabled
+
+#### Batch Processing Logic
+1. **Calculate Available Slots**: Considers global `maxConcurrency` and job-specific `lockLimit`
+2. **Determine Batch Size**: `min(configuredBatchSize, availableSlots)`
+3. **Atomic Locking**: Uses MongoDB `updateMany` to lock multiple jobs simultaneously
+4. **Conflict Resilience**: Includes retry logic for handling write conflicts during batch operations
+
+#### Performance Benefits
+- **Reduced Database Calls**: Fewer MongoDB operations mean less network overhead
+- **Lower Write Conflicts**: Batch operations reduce the probability of multiple workers competing for the same jobs
+- **Better Throughput**: More efficient resource utilization in high-concurrency environments
+- **Scalability**: Improved performance as the number of concurrent workers increases
+
+#### Configuration Examples
+
+**High-Throughput Setup:**
+```javascript
+const agenda = new Agenda({
+  mongo: db,
+  maxConcurrency: 50,
+  batchSize: 10,
+  enableBatchProcessing: true
+});
+```
+
+**Conservative Setup:**
+```javascript
+const agenda = new Agenda({
+  mongo: db,
+  maxConcurrency: 10,
+  batchSize: 3,
+  enableBatchProcessing: true
+});
+```
+
+**Disable Batch Processing:**
+```javascript
+const agenda = new Agenda({
+  mongo: db,
+  enableBatchProcessing: false  // Forces single job processing
+});
+```
+
+#### When Batch Processing is Used
+- **Enabled**: `enableBatchProcessing: true` (default)
+- **Beneficial**: When calculated batch size > 1
+- **Available Capacity**: When concurrency limits allow multiple jobs
+- **Job Availability**: When multiple jobs of the same type are ready to run
+
+#### When Single Job Processing is Used
+- **Disabled**: `enableBatchProcessing: false`
+- **Limited Capacity**: When only 1 concurrency slot is available
+- **Small Batch Size**: When `batchSize: 1` is configured
+- **No Available Jobs**: When fewer jobs are available than the batch size

@@ -17,6 +17,8 @@ it differs from the original version in following points:
 - Supports mongoDB sharding by name
 - touch() can have an optional progress parameter (0-100)
 - Bugfixes and improvements for locking & job processing (concurrency, lockLimit,..)
+- **Intelligent batch processing** for improved performance and reduced write conflicts
+- **Write conflict resilience** with exponential backoff retry logic
 - Breaking change: define() config paramter moved from 2nd position to 3rd
 - getRunningStats()
 - automatically waits for agenda to be connected before calling any database operations
@@ -42,6 +44,8 @@ db.agendaJobs.ensureIndex({
 - Scheduling with configurable priority, concurrency, and repeating.
 - Scheduling via cron or human readable syntax.
 - Event backed job queue that you can hook into.
+- **Intelligent batch processing** for high-performance job processing with configurable batch sizes.
+- **Write conflict resilience** with automatic retry and exponential backoff for MongoDB operations.
 - [Agendash](https://github.com/agenda/agendash): optional standalone web-interface.
 - [Agenda-rest](https://github.com/agenda/agenda-rest): optional standalone REST API.
 - [inversify-agenda](https://github.com/lautarobock/inversify-agenda) - Some utilities for the development of agenda workers with Inversify
@@ -68,6 +72,8 @@ better suits your needs.
 | REST API                   |                 |          |   ✓    |    ✓     |
 | Central (Scalable) Queue   |                 |          |        |    ✓     |
 | Supports long running jobs |                 |          |        |    ✓     |
+| **Batch Processing**       |                 |          |        |  **✓**   |
+| **Write Conflict Resilience** |             |          |        |  **✓**   |
 | Optimized for              | Jobs / Messages | Messages |  Jobs  |   Jobs   |
 
 _Kudos for making the comparison chart goes to [Bull](https://www.npmjs.com/package/bull#feature-comparison) maintainers._
@@ -372,6 +378,41 @@ const agenda = new Agenda({ defaultLockLifetime: 10000 });
 Takes a `query` which specifies the sort query to be used for finding and locking the next job.
 
 By default it is `{ nextRunAt: 1, priority: -1 }`, which obeys a first in first out approach, with respect to priority.
+
+### batchSize(size)
+
+Sets the number of jobs to process in each batch operation. Batch processing improves performance by reducing MongoDB operations and write conflicts.
+
+```js
+agenda.batchSize(10);
+```
+
+You can also specify it during instantiation
+
+```js
+const agenda = new Agenda({ batchSize: 10 });
+```
+
+### enableBatchProcessing(enabled)
+
+Enables or disables batch processing. When enabled, AgendaTS will intelligently use batch operations when beneficial.
+
+```js
+agenda.enableBatchProcessing(true);  // Enable (default)
+agenda.enableBatchProcessing(false); // Disable - force single job processing
+```
+
+You can also specify it during instantiation
+
+```js
+const agenda = new Agenda({ enableBatchProcessing: true });
+```
+
+**Batch Processing Behavior:**
+- When enabled and `batchSize > 1`: Uses batch operations when multiple jobs are available
+- When disabled or `batchSize = 1`: Uses single job processing
+- Automatically respects concurrency limits and job-specific lock limits
+- Includes write conflict resilience with exponential backoff retry logic
 
 ## Agenda Events
 

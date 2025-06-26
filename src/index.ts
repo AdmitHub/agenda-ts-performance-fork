@@ -25,6 +25,8 @@ const DefaultOptions = {
 	defaultLockLimit: 0,
 	lockLimit: 0,
 	defaultLockLifetime: 10 * 60 * 1000,
+	batchSize: 5,
+	enableBatchProcessing: true,
 	sort: { nextRunAt: 1, priority: -1 } as const,
 	forkHelper: { path: 'dist/childWorker.js' }
 };
@@ -105,6 +107,8 @@ export class Agenda extends EventEmitter {
 			defaultLockLimit?: number;
 			lockLimit?: number;
 			defaultLockLifetime?: number;
+			batchSize?: number;
+			enableBatchProcessing?: boolean;
 			// eslint-disable-next-line @typescript-eslint/ban-types
 		} & (IDatabaseOptions | IMongoOptions | {}) &
 			IDbConfig & {
@@ -123,6 +127,8 @@ export class Agenda extends EventEmitter {
 			defaultLockLimit: config.defaultLockLimit || DefaultOptions.defaultLockLimit,
 			lockLimit: config.lockLimit || DefaultOptions.lockLimit,
 			defaultLockLifetime: config.defaultLockLifetime || DefaultOptions.defaultLockLifetime, // 10 minute default lockLifetime
+			batchSize: config.batchSize || DefaultOptions.batchSize,
+			enableBatchProcessing: config.enableBatchProcessing !== undefined ? config.enableBatchProcessing : DefaultOptions.enableBatchProcessing,
 			sort: config.sort || DefaultOptions.sort
 		};
 
@@ -273,6 +279,28 @@ export class Agenda extends EventEmitter {
 	defaultLockLifetime(ms: number): Agenda {
 		log('Agenda.defaultLockLifetime(%d)', ms);
 		this.attrs.defaultLockLifetime = ms;
+		return this;
+	}
+
+	/**
+	 * Set the batch size for job processing
+	 * Default is 5
+	 * @param size
+	 */
+	batchSize(size: number): Agenda {
+		log('Agenda.batchSize(%d)', size);
+		this.attrs.batchSize = size;
+		return this;
+	}
+
+	/**
+	 * Enable or disable batch processing
+	 * Default is true
+	 * @param enabled
+	 */
+	enableBatchProcessing(enabled: boolean): Agenda {
+		log('Agenda.enableBatchProcessing(%s)', enabled);
+		this.attrs.enableBatchProcessing = enabled;
 		return this;
 	}
 
