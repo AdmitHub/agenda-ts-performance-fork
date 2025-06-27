@@ -150,6 +150,75 @@ agenda.define(
 })();
 ```
 
+## Batch Processing Example
+
+```js
+// High-throughput configuration with batch processing
+const agenda = new Agenda({
+	db: { address: mongoConnectionString },
+	maxConcurrency: 50,              // Process up to 50 jobs concurrently
+	batchSize: 10,                   // Lock up to 10 jobs in each batch
+	enableBatchProcessing: true,     // Enable batch processing (default)
+	processEvery: '10 second',        // Check for new jobs every second
+	defaultLockLifetime: 5 * 60 * 1000 // 5 minute lock lifetime
+});
+
+// Define a job that benefits from batch processing
+agenda.define('process payment', async job => {
+	const { orderId, amount } = job.attrs.data;
+	await processPayment(orderId, amount);
+}, { concurrency: 20 }); // Allow up to 20 concurrent payment processing jobs
+
+// Define a job with lower concurrency
+agenda.define('send notification', async job => {
+	const { userId, message } = job.attrs.data;
+	await sendNotification(userId, message);
+}, { concurrency: 5 }); // Limit to 5 concurrent notifications
+
+(async function () {
+	await agenda.start();
+	
+	// Schedule many jobs that will be processed in batches
+	for (let i = 0; i < 1000; i++) {
+		await agenda.now('process payment', { 
+			orderId: `order-${i}`, 
+			amount: Math.random() * 100 
+		});
+	}
+	
+	// Monitor batch processing performance
+	agenda.on('queueOverflow', ({ jobName, queueSize, maxSize }) => {
+		console.warn(`Queue overflow for ${jobName}: ${queueSize}/${maxSize}`);
+	});
+	
+	// Track job processing stats
+	setInterval(async () => {
+		const stats = await agenda.getRunningStats();
+		console.log('Running jobs:', stats.runningJobs.length);
+		console.log('Locked jobs:', stats.lockedJobs.length);
+		console.log('Queue utilization:', agenda.jobQueue.getUtilization() + '%');
+	}, 5000);
+})();
+```
+
+```js
+// Resource-constrained configuration
+const agenda = new Agenda({
+	db: { address: mongoConnectionString },
+	maxConcurrency: 5,               // Limited concurrency
+	batchSize: 3,                    // Smaller batch size
+	enableBatchProcessing: true,
+	processEvery: '10 seconds',      // Less frequent job checking
+	defaultLockLifetime: 60 * 1000   // 1 minute lock lifetime
+});
+
+// Disable batch processing for specific use cases
+const agenda = new Agenda({
+	db: { address: mongoConnectionString },
+	enableBatchProcessing: false     // Force single job processing
+});
+```
+
 # Full documentation
 
 See also https://hokify.github.io/agenda/
