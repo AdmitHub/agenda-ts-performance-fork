@@ -9,6 +9,7 @@ import type { IAgendaConfig } from './types/AgendaConfig';
 import type { IDatabaseOptions, IDbConfig, IMongoOptions } from './types/DbOptions';
 import type { IAgendaStatus } from './types/AgendaStatus';
 import type { IJobParameters } from './types/JobParameters';
+import type { IConnectionPoolStatus } from './types/ConnectionPoolOptions';
 import { Job, JobWithId } from './Job';
 import { JobDbRepository } from './JobDbRepository';
 import { JobPriority, parsePriority } from './utils/priority';
@@ -57,6 +58,7 @@ export class Agenda extends EventEmitter {
 	on(event: string, listener: (error: Error, job: JobWithId) => void): this;
 	on(event: 'ready', listener: () => void): this;
 	on(event: 'error', listener: (error: Error) => void): this;
+	on(event: 'connectionPoolWarning', listener: (warning: string) => void): this;
 	on(event: string, listener: (...args) => void): this {
 		if (this.forkedWorker && event !== 'ready' && event !== 'error') {
 			const warning = new Error(`calling on(${event}) during a forkedWorker has no effect!`);
@@ -92,6 +94,26 @@ export class Agenda extends EventEmitter {
 			throw new Error('agenda not running!');
 		}
 		return this.jobProcessor.getStatus(fullDetails);
+	}
+
+	/**
+	 * Get connection pool status and metrics
+	 */
+	async getConnectionPoolStatus(): Promise<IConnectionPoolStatus | null> {
+		if (!this.db) {
+			return null;
+		}
+		
+		const status = await this.db.getConnectionPoolStatus();
+		
+		// Emit warnings if any
+		if (status && status.warnings.length > 0) {
+			status.warnings.forEach(warning => {
+				this.emit('connectionPoolWarning', warning);
+			});
+		}
+		
+		return status;
 	}
 
 	/**
@@ -613,6 +635,11 @@ export class Agenda extends EventEmitter {
 		this.removeAllListeners('queueOverflow');
 
 		this.jobProcessor = undefined;
+
+		// Disconnect from MongoDB if we own the connection
+		if (this.db) {
+			await this.db.disconnect();
+		}
 	}
 }
 
@@ -623,5 +650,7 @@ export * from './types/JobDefinition';
 export * from './types/JobParameters';
 
 export * from './types/DbOptions';
+
+export * from './types/ConnectionPoolOptions';
 
 export * from './Job';

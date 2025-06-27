@@ -622,10 +622,16 @@ describe('Agenda', () => {
 			const listIndex = await mongoDb.command({ listIndexes: 'agendaJobs' });
 			const indexes = listIndex.cursor.firstBatch;
 			
-			// Should have _id_ + findAndLockNextJobIndex
-			expect(indexes).to.have.lengthOf(2);
+			// Should have _id_ + optimized indexes for performance
+			expect(indexes).to.have.lengthOf(5);
 			expect(indexes[0].name).to.be.equal('_id_');
-			expect(indexes[1].name).to.be.equal('findAndLockNextJobIndex');
+			
+			// Check that our performance indexes are created
+			const indexNames = indexes.map(index => index.name);
+			expect(indexNames).to.include('optimizedJobDiscoveryIndex');
+			expect(indexNames).to.include('lockedJobIndex');
+			expect(indexNames).to.include('jobStatusIndex');
+			expect(indexNames).to.include('findAndLockNextJobIndex');
 		}).timeout(30000);
 
 		it('creating two agenda-instances with ensureIndex-Option true does not throw an error', async () => {

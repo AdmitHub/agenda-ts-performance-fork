@@ -13,8 +13,10 @@ import type { Job, JobWithId } from './Job';
 import type { Agenda } from './index';
 import type { IDatabaseOptions, IDbConfig, IMongoOptions } from './types/DbOptions';
 import type { IJobParameters } from './types/JobParameters';
+import type { IConnectionPoolStatus } from './types/ConnectionPoolOptions';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { hasMongoProtocol } from './utils/hasMongoProtocol';
+import { ConnectionPoolManager } from './utils/ConnectionPoolManager';
 
 const log = debug('agenda:db');
 
@@ -23,6 +25,9 @@ const log = debug('agenda:db');
  */
 export class JobDbRepository {
 	collection: Collection<IJobParameters>;
+	private mongoClient?: MongoClient;
+	private isOwnedConnection = false;
+	private poolManager?: ConnectionPoolManager;
 
 	constructor(
 		private agenda: Agenda,
@@ -356,20 +361,15 @@ export class JobDbRepository {
 			connectionString = `mongodb://${connectionString}`;
 		}
 
-		const client = await MongoClient.connect(connectionString, {
-			// Default optimized connection pool settings
-			maxPoolSize: 100,
-			minPoolSize: 10,
-			maxIdleTimeMS: 30000,
-			waitQueueTimeoutMS: 5000,
-			serverSelectionTimeoutMS: 5000,
-			socketTimeoutMS: 0, // Never timeout socket operations
-			family: 4, // Use IPv4, skip IPv6 resolution unless needed
-			// User provided options can override defaults
-			...options
-		});
-
-		return client.db();
+		// Use connection pool manager for shared connection pooling
+		this.poolManager = ConnectionPoolManager.getInstance(connectionString, options || {});
+		const db = await this.poolManager.connect();
+		
+		// Store the client reference for backward compatibility
+		this.mongoClient = this.poolManager.getClient();
+		this.isOwnedConnection = true;
+		
+		return db;
 	}
 
 	private processDbResult<DATA = unknown | void>(
@@ -547,5 +547,28 @@ export class JobDbRepository {
 			log('processDbResult() received an error, job was not updated/created');
 			throw error;
 		}
+	}
+
+	/**
+	 * Disconnect from the database and close the connection pool
+	 */
+	async disconnect(): Promise<void> {
+		if (this.poolManager && this.isOwnedConnection) {
+			log('disconnecting from connection pool');
+			await this.poolManager.disconnect();
+			this.poolManager = undefined;
+			this.mongoClient = undefined;
+			this.isOwnedConnection = false;
+		}
+	}
+
+	/**
+	 * Get connection pool status and metrics
+	 */
+	async getConnectionPoolStatus(): Promise<IConnectionPoolStatus | null> {
+		if (!this.poolManager) {
+			return null;
+		}
+		return this.poolManager.getPoolStatus();
 	}
 }
