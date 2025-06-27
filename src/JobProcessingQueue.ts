@@ -10,7 +10,7 @@ export class JobProcessingQueue {
 
 	private readonly maxQueueSize: number;
 
-	constructor(private agenda: Agenda, maxQueueSize = 10000) {
+	constructor(private agenda: Agenda, maxQueueSize = 500000) {
 		this._queue = [];
 		this.maxQueueSize = maxQueueSize;
 	}
