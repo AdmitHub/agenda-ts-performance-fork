@@ -128,7 +128,10 @@ export class Agenda extends EventEmitter {
 			lockLimit: config.lockLimit || DefaultOptions.lockLimit,
 			defaultLockLifetime: config.defaultLockLifetime || DefaultOptions.defaultLockLifetime, // 10 minute default lockLifetime
 			batchSize: config.batchSize || DefaultOptions.batchSize,
-			enableBatchProcessing: config.enableBatchProcessing !== undefined ? config.enableBatchProcessing : DefaultOptions.enableBatchProcessing,
+			enableBatchProcessing:
+				config.enableBatchProcessing !== undefined
+					? config.enableBatchProcessing
+					: DefaultOptions.enableBatchProcessing,
 			sort: config.sort || DefaultOptions.sort
 		};
 
@@ -595,7 +598,7 @@ export class Agenda extends EventEmitter {
 
 		// Clean up event listeners to prevent memory leaks
 		this.off('processJob', this.jobProcessor.process.bind(this.jobProcessor));
-		
+
 		// Remove all job-specific event listeners
 		Object.keys(this.definitions).forEach(jobName => {
 			this.removeAllListeners(`start:${jobName}`);

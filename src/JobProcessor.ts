@@ -82,12 +82,15 @@ export class JobProcessor {
 	private jobQueue: JobProcessingQueue = new JobProcessingQueue(this.agenda);
 
 	private runningJobs: JobWithId[] = [];
+
 	private runningJobsMap = new Map<string, JobWithId>();
 
 	private lockedJobs: JobWithId[] = [];
+
 	private lockedJobsMap = new Map<string, JobWithId>();
 
 	private jobsToLock: JobWithId[] = [];
+
 	private jobsToLockMap = new Map<string, JobWithId>();
 
 	private isLockingOnTheFly = false;
@@ -328,11 +331,11 @@ export class JobProcessor {
 		definition: IJobDefinition
 	): Promise<JobWithId[]> {
 		const lockDeadline = new Date(Date.now().valueOf() - definition.lockLifetime);
-		
+
 		// Calculate how many jobs we can process
 		const availableSlots = this.calculateAvailableSlots(jobName);
 		const batchSize = Math.min(this.agenda.attrs.batchSize || 5, availableSlots);
-		
+
 		log.extend('findAndLockNextJobs')(
 			`looking for up to ${batchSize} lockable jobs for ${jobName} (lock dead line = ${lockDeadline})`
 		);
@@ -340,9 +343,9 @@ export class JobProcessor {
 		// Use batch processing if enabled and beneficial
 		if (this.agenda.attrs.enableBatchProcessing && batchSize > 1) {
 			const results = await this.agenda.db.batchGetNextJobsToRun(
-				jobName, 
-				batchSize, 
-				this.nextScanAt, 
+				jobName,
+				batchSize,
+				this.nextScanAt,
 				lockDeadline
 			);
 
@@ -353,27 +356,28 @@ export class JobProcessor {
 				);
 				return new Job(this.agenda, result, true) as JobWithId;
 			});
-		} else {
-			// Fall back to single job processing
-			const job = await this.findAndLockNextJob(jobName, definition);
-			return job ? [job] : [];
 		}
+		// Fall back to single job processing
+		const job = await this.findAndLockNextJob(jobName, definition);
+		return job ? [job] : [];
 	}
 
 	private calculateAvailableSlots(jobName: string): number {
 		const definition = this.agenda.definitions[jobName];
 		const status = this.jobStatus[jobName];
-		
+
 		// Calculate global available slots
-		const globalAvailable = this.totalLockLimit > 0 
-			? Math.max(0, this.totalLockLimit - this.lockedJobs.length)
-			: Number.MAX_SAFE_INTEGER;
-		
+		const globalAvailable =
+			this.totalLockLimit > 0
+				? Math.max(0, this.totalLockLimit - this.lockedJobs.length)
+				: Number.MAX_SAFE_INTEGER;
+
 		// Calculate job-specific available slots
-		const jobSpecificAvailable = definition.lockLimit > 0 && status
-			? Math.max(0, definition.lockLimit - status.locked)
-			: Number.MAX_SAFE_INTEGER;
-		
+		const jobSpecificAvailable =
+			definition.lockLimit > 0 && status
+				? Math.max(0, definition.lockLimit - status.locked)
+				: Number.MAX_SAFE_INTEGER;
+
 		return Math.min(globalAvailable, jobSpecificAvailable);
 	}
 

@@ -7,6 +7,7 @@ import type { Agenda } from './index';
  */
 export class JobProcessingQueue {
 	private _queue: Job[];
+
 	private readonly maxQueueSize: number;
 
 	constructor(private agenda: Agenda, maxQueueSize = 10000) {
@@ -67,10 +68,10 @@ export class JobProcessingQueue {
 		if (this._queue.length >= this.maxQueueSize) {
 			// Queue is full - implement overflow handling
 			// Could emit an event here for monitoring
-			this.agenda.emit('queueOverflow', { 
-				jobName: job.attrs.name, 
+			this.agenda.emit('queueOverflow', {
+				jobName: job.attrs.name,
 				queueSize: this._queue.length,
-				maxSize: this.maxQueueSize 
+				maxSize: this.maxQueueSize
 			});
 			return false;
 		}
@@ -81,7 +82,7 @@ export class JobProcessingQueue {
 				element.attrs.nextRunAt.getTime() <= job.attrs.nextRunAt.getTime()
 			) {
 				if (element.attrs.nextRunAt.getTime() === job.attrs.nextRunAt.getTime()) {
-					if (element.attrs.priority <= job.attrs.priority) {
+					if (element.attrs.priority >= job.attrs.priority) {
 						return true;
 					}
 				} else {

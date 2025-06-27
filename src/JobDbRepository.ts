@@ -189,12 +189,21 @@ export class JobDbRepository {
 					JOB_PROCESS_SET_QUERY
 				);
 
-				// Return only the jobs that were successfully locked
+				// Return only the jobs that were successfully locked, preserving the original sort order
 				if (updateResult.modifiedCount > 0) {
-					return this.collection.find({
+					const lockedJobs = await this.collection.find({
 						_id: { $in: jobIds },
 						lockedAt: now
 					}).toArray();
+
+					// Preserve the original sort order from the aggregation pipeline
+					const orderedJobs = availableJobs
+						.map(originalJob => lockedJobs.find(lockedJob => 
+							lockedJob._id.toString() === originalJob._id.toString()
+						))
+						.filter(job => job !== undefined) as IJobParameters[];
+
+					return orderedJobs;
 				}
 
 				return [];
@@ -279,55 +288,57 @@ export class JobDbRepository {
 		if (this.connectOptions.ensureIndex) {
 			log('attempting index creation');
 			try {
-				// Optimized index for job discovery - prioritizes common query patterns
-				const primaryResult = await this.collection.createIndex(
-					{
-						name: 1,
-						disabled: 1,
-						nextRunAt: 1,
-						lockedAt: 1,
-						priority: -1
-					},
-					{ name: 'optimizedJobDiscoveryIndex' }
-				);
-				log('primary index successfully created', primaryResult);
+				// Create all indexes in parallel for better performance
+				const indexPromises = [
+					// Optimized index for job discovery - prioritizes common query patterns
+					this.collection.createIndex(
+						{
+							name: 1,
+							disabled: 1,
+							nextRunAt: 1,
+							lockedAt: 1,
+							priority: -1
+						},
+						{ name: 'optimizedJobDiscoveryIndex' }
+					),
 
-				// Separate index for locked job queries and cleanup
-				const lockedJobResult = await this.collection.createIndex(
-					{
-						lockedAt: 1,
-						name: 1
-					},
-					{ 
-						name: 'lockedJobIndex',
-						partialFilterExpression: { lockedAt: { $ne: null } }
-					}
-				);
-				log('locked job index successfully created', lockedJobResult);
+					// Separate index for locked job queries and cleanup
+					this.collection.createIndex(
+						{
+							lockedAt: 1,
+							name: 1
+						},
+						{ 
+							name: 'lockedJobIndex',
+							partialFilterExpression: { lockedAt: { $exists: true } }
+						}
+					),
 
-				// Index for job status and history queries
-				const statusResult = await this.collection.createIndex(
-					{
-						name: 1,
-						lastFinishedAt: -1
-					},
-					{ name: 'jobStatusIndex' }
-				);
-				log('status index successfully created', statusResult);
+					// Index for job status and history queries
+					this.collection.createIndex(
+						{
+							name: 1,
+							lastFinishedAt: -1
+						},
+						{ name: 'jobStatusIndex' }
+					),
 
-				// Legacy index for backward compatibility (if needed)
-				const legacyResult = await this.collection.createIndex(
-					{
-						name: 1,
-						...this.connectOptions.sort,
-						priority: -1,
-						lockedAt: 1,
-						nextRunAt: 1,
-						disabled: 1
-					},
-					{ name: 'findAndLockNextJobIndex' }
-				);
-				log('legacy index successfully created', legacyResult);
+					// Legacy index for backward compatibility (if needed)
+					this.collection.createIndex(
+						{
+							name: 1,
+							...this.connectOptions.sort,
+							priority: -1,
+							lockedAt: 1,
+							nextRunAt: 1,
+							disabled: 1
+						},
+						{ name: 'findAndLockNextJobIndex' }
+					)
+				];
+
+				const results = await Promise.all(indexPromises);
+				log('all indexes successfully created', results);
 
 			} catch (error) {
 				log('db index creation failed', error);
