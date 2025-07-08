@@ -1,6 +1,6 @@
 {
 	"compilerOptions": {
-		"outDir": "./dist-2",
+		"outDir": "./dist",
 		"rootDir": "./src",
 
 		// target settings for node 10
@@ -25,6 +25,6 @@
     "emitDeclarationOnly": false,
     "preserveSymlinks": true
 	},
-	"exclude": ["node_modules", "**/__tests__"],
+	"exclude": ["node_modules", "**/__tests__", "dist"],
 	"include": ["src/**/*"],
 }
