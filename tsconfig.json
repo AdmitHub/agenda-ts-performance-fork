@@ -21,8 +21,10 @@
 		"resolveJsonModule": true,
 		"sourceMap": true,
 		"isolatedModules": false,
-		"declaration": true
+		"declaration": true,
+    "emitDeclarationOnly": false,
+    "preserveSymlinks": true
 	},
 	"exclude": ["node_modules", "**/__tests__"],
-	"include": ["./src"]
+	"include": ["src/**/*"],
 }
