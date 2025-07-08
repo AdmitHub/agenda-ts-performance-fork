@@ -1,6 +1,6 @@
 {
 	"compilerOptions": {
-		"outDir": "./dist",
+		"outDir": "./dist-2",
 		"rootDir": "./src",
 
 		// target settings for node 10
